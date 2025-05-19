@@ -81,10 +81,6 @@ Inside each project folder, you’ll usually find:
 - A `main.js` (or similar) with the interactive code  
 - Comments or notes in the source explaining the approach
 
-## Development Scripts
-
-I’ve included a small Python script, `add_projects_commits.py`, that automates adding GitHub commit counts to my project listing. Feel free to adapt it for your own static sites.
-
 ## Contributing
 
 I’m always open to feedback and improvements! If you’d like to suggest a feature, fix a bug, or share optimizations:
