@@ -1,1 +1,1 @@
-[Site](https://aidentothe.github.io)
+[Site](https://aidentothe.github.io/projects)
