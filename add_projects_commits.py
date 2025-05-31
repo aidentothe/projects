@@ -27,6 +27,7 @@ import argparse
 import logging
 import os
 import random
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, List
@@ -71,20 +72,24 @@ COMMIT_MESSAGES: list[str] = [
 
 def find_project_dirs(repo_root: Path) -> list[Path]:
     """Return immediate sub-directories that should be treated as projects."""
-    return [
+    dirs = [
         d
         for d in repo_root.iterdir()
         if d.is_dir() and d.name not in PROJECTS_TO_IGNORE and not d.name.startswith(".")
     ]
+    logging.debug("Identified project directories: %s", [d.name for d in dirs])
+    return dirs
 
 
 def list_files_recursively(project_path: Path, repo_root: Path) -> list[str]:
     """Return every file path **relative to *repo_root*** inside *project_path*."""
-    return [
+    all_files = [
         str(p.relative_to(repo_root))
         for p in project_path.rglob("*")
         if p.is_file()
     ]
+    logging.debug("Files found in %s: %s", project_path.name, all_files)
+    return all_files
 
 
 def split_list(lst: list[str], min_parts: int = MIN_COMMITS_PER_PROJECT, max_parts: int = MAX_COMMITS_PER_PROJECT) -> list[list[str]]:
@@ -93,13 +98,17 @@ def split_list(lst: list[str], min_parts: int = MIN_COMMITS_PER_PROJECT, max_par
         return []
     n_parts = random.randint(min_parts, max_parts)
     random.shuffle(lst)
-    return [lst[i :: n_parts] for i in range(n_parts)]
+    groups = [lst[i :: n_parts] for i in range(n_parts)]
+    logging.debug("Split list into %d groups", len(groups))
+    return groups
 
 
 def random_time_within_week(week_start: datetime) -> datetime:
     """Return a random *datetime* inside the seven-day window starting at *week_start*."""
     delta = timedelta(days=random.randint(0, 6), seconds=random.randint(0, 86_399))
-    return week_start + delta
+    ts = week_start + delta
+    logging.debug("Generated random timestamp: %s", ts.isoformat())
+    return ts
 
 
 def commit_group(
@@ -110,10 +119,22 @@ def commit_group(
 ) -> None:
     """Stage *file_group* and create a commit stamped with *timestamp*."""
     if not file_group:
+        logging.debug("Empty file group, skipping commit.")
         return
 
+    lock_file = repo.working_tree_dir and Path(repo.working_tree_dir) / ".git" / "index.lock"
+    if lock_file and lock_file.exists():
+        logging.warning("Found stale lock file at %s, waiting briefly then removing it.", lock_file)
+        time.sleep(0.5)  # small delay to avoid race condition
+        try:
+            lock_file.unlink()
+            logging.info("Removed stale lock file.")
+        except Exception as e:
+            logging.error("Failed to remove lock file: %s", e)
+            return
+
+    logging.info("Staging files: %s", file_group)
     repo.index.add(file_group)
-    # GitPython requires ISO-8601 strings for custom dates
     iso_ts = timestamp.isoformat()
     repo.index.commit(
         msg,
@@ -122,6 +143,7 @@ def commit_group(
         author_date=iso_ts,
         commit_date=iso_ts,
     )
+    logging.info("Committed with message: '%s' at %s", msg, iso_ts)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +157,7 @@ def generate_history(repo_root: Path, start_date: datetime) -> None:
     except InvalidGitRepositoryError as exc:
         raise SystemExit(f"{repo_root} is not a Git repository: {exc}") from exc
 
+    logging.info("Using Git repository at %s", repo_root)
     projects = find_project_dirs(repo_root)
     logging.info("Found %d projects: %s", len(projects), ", ".join(p.name for p in projects))
 
@@ -212,7 +235,7 @@ def main(argv: list[str] | None = None) -> None:
     # ------------------------------------------------------------------
     # Logging config
     # ------------------------------------------------------------------
-    log_level = logging.WARNING - min(args.verbose, 2) * 10  # 0-2 times -v
+    log_level = logging.WARNING - min(args.verbose, 3) * 10  # Allow up to -vvv
     logging.basicConfig(format="%(levelname)s: %(message)s", level=log_level)
 
     if args.seed is not None:
@@ -224,6 +247,7 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         raise SystemExit(f"Invalid --start-date '{args.start_date}'; must be YYYY-MM-DD") from exc
 
+    logging.info("Generating commit history starting from %s", start_date.date())
     generate_history(args.repo.resolve(), start_date)
 
     if args.push:
